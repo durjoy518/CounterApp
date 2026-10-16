@@ -1,27 +1,149 @@
-name: Build APK
-on:
-  push:
-  workflow_dispatch:
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - run: npm install
-      - run: npx cap add android
-      - run: npx cap sync android
-      - run: |
-          chmod +x android/gradlew
-          cd android
-          ./gradlew assembleDebug
-      - uses: actions/upload-artifact@v4
-        with:
-          name: counter-app-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Counter App</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;font-family:sans-serif}
+  #wrap{display:flex;flex-direction:column;height:100%}
+  @media (orientation:landscape){#wrap{flex-direction:row}}
+  .half{flex:1;display:grid;grid-template-rows:1fr auto 1fr;justify-items:center;touch-action:none;user-select:none;-webkit-user-select:none;position:relative}
+  .label{align-self:end;width:90%;text-align:center;font-size:28px;background:transparent;border:none;outline:none;padding:10px;font-family:inherit}
+  .num{align-self:center;font-size:110px;font-weight:600;line-height:1}
+  .btns{align-self:end;display:flex;gap:14px;padding-bottom:16px}
+  .btns button{width:46px;height:46px;border-radius:50%;border:2px solid rgba(0,0,0,.35);background:rgba(255,255,255,.35);font-size:18px;font-weight:700}
+  #modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+  #box{background:#222;color:#fff;padding:18px;border-radius:16px;text-align:center;touch-action:none}
+  #box h3{margin-bottom:10px;font-size:18px}
+  canvas{touch-action:none;border-radius:50%}
+  #bright{width:260px;margin:14px 0}
+  #prev{height:30px;border-radius:8px;margin-bottom:12px}
+  #done{padding:10px 30px;font-size:16px;border:none;border-radius:8px;background:#fff;color:#000}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="half" data-k="a">
+    <input class="label" maxlength="30">
+    <div class="num">0</div>
+    <div class="btns"><button data-p="bg">●</button><button data-p="fg">A</button></div>
+  </div>
+  <div class="half" data-k="b">
+    <input class="label" maxlength="30">
+    <div class="num">0</div>
+    <div class="btns"><button data-p="bg">●</button><button data-p="fg">A</button></div>
+  </div>
+</div>
+
+<div id="modal"><div id="box">
+  <h3 id="mt"></h3>
+  <canvas id="wheel" width="260" height="260"></canvas>
+  <input type="range" id="bright" min="10" max="100" value="100">
+  <div id="prev"></div>
+  <button id="done">Done</button>
+</div></div>
+
+<script>
+var KEY='counterApp2';
+var def={a:{n:0,t:'Text',bg:'#6a25ff',fg:'#000000'},b:{n:0,t:'Text',bg:'#2affc0',fg:'#000000'}};
+var S=null;
+try{S=JSON.parse(localStorage.getItem(KEY));}catch(e){}
+if(!S||!S.a||!S.b)S=def;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
+
+function apply(k){
+  var el=document.querySelector('.half[data-k='+k+']'),d=S[k];
+  el.style.background=d.bg;el.style.color=d.fg;
+  el.querySelector('.num').textContent=d.n;
+  var l=el.querySelector('.label');l.value=d.t;l.style.color=d.fg;
+}
+['a','b'].forEach(function(k){
+  apply(k);
+  var el=document.querySelector('.half[data-k='+k+']');
+  el.querySelector('.label').addEventListener('input',function(e){S[k].t=e.target.value;save();});
+  // swipe
+  var lastY=null,acc=0,STEP=35;
+  el.addEventListener('pointerdown',function(e){
+    if(e.target.closest('input,button'))return;
+    lastY=e.clientY;acc=0;el.setPointerCapture(e.pointerId);
+  });
+  el.addEventListener('pointermove',function(e){
+    if(lastY===null)return;
+    acc+=lastY-e.clientY;lastY=e.clientY;
+    var steps=Math.trunc(acc/STEP);
+    if(steps){
+      S[k].n=Math.max(0,S[k].n+steps);
+      acc-=steps*STEP;
+      el.querySelector('.num').textContent=S[k].n;save();
+    }
+  });
+  function end(){lastY=null;}
+  el.addEventListener('pointerup',end);
+  el.addEventListener('pointercancel',end);
+  el.querySelectorAll('.btns button').forEach(function(b){
+    b.addEventListener('click',function(){openPicker(k,b.dataset.p);});
+  });
+});
+
+// ---- color wheel ----
+var modal=document.getElementById('modal'),cv=document.getElementById('wheel'),
+    ctx=cv.getContext('2d'),br=document.getElementById('bright'),prev=document.getElementById('prev');
+var R=130,cur={k:null,p:null},H=0,Sa=1,V=1;
+function hsv2rgb(h,s,v){
+  var c=v*s,x=c*(1-Math.abs((h/60)%2-1)),m=v-c,r=0,g=0,b=0;
+  if(h<60){r=c;g=x}else if(h<120){r=x;g=c}else if(h<180){g=c;b=x}
+  else if(h<240){g=x;b=c}else if(h<300){r=x;b=c}else{r=c;b=x}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];
+}
+function rgb2hsv(r,g,b){
+  r/=255;g/=255;b/=255;
+  var mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn,h=0;
+  if(d){
+    if(mx==r)h=60*(((g-b)/d)%6);else if(mx==g)h=60*((b-r)/d+2);else h=60*((r-g)/d+4);
+    if(h<0)h+=360;
+  }
+  return [h,mx?d/mx:0,mx];
+}
+function hex(rgb){return '#'+rgb.map(function(n){return ('0'+n.toString(16)).slice(-2)}).join('');}
+function drawWheel(){
+  var img=ctx.createImageData(260,260),i=0;
+  for(var y=0;y<260;y++)for(var x=0;x<260;x++){
+    var dx=x-R,dy=y-R,r=Math.sqrt(dx*dx+dy*dy);
+    if(r<=R){
+      var h=(Math.atan2(dy,dx)*180/Math.PI+360)%360,c=hsv2rgb(h,r/R,V);
+      img.data[i]=c[0];img.data[i+1]=c[1];img.data[i+2]=c[2];img.data[i+3]=255;
+    }
+    i+=4;
+  }
+  ctx.putImageData(img,0,0);
+  var a=H*Math.PI/180;
+  ctx.beginPath();ctx.arc(R+Math.cos(a)*Sa*R,R+Math.sin(a)*Sa*R,9,0,7);
+  ctx.lineWidth=3;ctx.strokeStyle='#fff';ctx.stroke();
+  ctx.lineWidth=1;ctx.strokeStyle='#000';ctx.stroke();
+  var col=hex(hsv2rgb(H,Sa,V));
+  prev.style.background=col;
+  S[cur.k][cur.p]=col;apply(cur.k);save();
+}
+function openPicker(k,p){
+  cur={k:k,p:p};
+  var c=S[k][p],hv=rgb2hsv(parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16));
+  H=hv[0];Sa=hv[1];V=Math.max(hv[2],0.1);br.value=Math.round(V*100);
+  document.getElementById('mt').textContent=p=='bg'?'Background color':'Text color';
+  modal.style.display='flex';drawWheel();
+}
+function pick(e){
+  var r=cv.getBoundingClientRect(),dx=e.clientX-r.left-R,dy=e.clientY-r.top-R;
+  H=(Math.atan2(dy,dx)*180/Math.PI+360)%360;
+  Sa=Math.min(Math.sqrt(dx*dx+dy*dy),R)/R;drawWheel();
+}
+var dragging=false;
+cv.addEventListener('pointerdown',function(e){dragging=true;cv.setPointerCapture(e.pointerId);pick(e);});
+cv.addEventListener('pointermove',function(e){if(dragging)pick(e);});
+cv.addEventListener('pointerup',function(){dragging=false;});
+br.addEventListener('input',function(){V=br.value/100;drawWheel();});
+document.getElementById('done').addEventListener('click',function(){modal.style.display='none';});
+</script>
+</body>
+</html>
